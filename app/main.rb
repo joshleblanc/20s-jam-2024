@@ -1,85 +1,81 @@
+require "lib/drecs/lib/drecs.rb"
+
+include Drecs::Main
+
+component :position, x: 0, y: 0
+component :size, w: 32, h: 32
+component :label, text: "lorem ipsum"
+component :hovered
+component :bordered
+component :clickable, target: :none
+
+entity :button, :position, :size, :label, :bordered, :solid, :label, :clickable
+
+system :click_system, :clickable, :position, :size do |entities|
+  entities.each do |e|
+    if inputs.mouse.click && inputs.mouse.click.point.inside_rect?(rect(e))
+      if e.clickable.target == :exit
+        exit
+      elsif e.clickable.target == :play
+        puts "Play!"
+      end
+    end
+  end
+end
+
+system :hoverable_system, :position, :size do |entities| 
+  entities.each do |e|
+    if inputs.mouse.position.inside_rect? rect(e)
+      add_component e, :hovered
+    else
+      remove_component e, :hovered
+    end
+  end
+end
+
+system :label_system, :label, :position, :label, :size do |entities|
+  entities.each do |e|
+    offsets = { x: 0, y: 0 }
+    offsets.x = e.size.w / 2
+    offsets.y = e.size.h / 2
+    outputs.labels << {
+      x: e.position.x + offsets.x,
+      y: e.position.y + offsets.y, 
+      alignment_enum: 1,
+      vertical_alignment_enum: 1,
+      text: e.label.text 
+    }
+  end
+end
+
+system :solid_system, :bordered do |entities|
+  entities.each do |e|
+    if has_components? e, :hovered
+      outputs.solids << rect(e).merge(r: 0, g: 255, b: 255)
+    else 
+      outputs.solids << rect(e).merge(r: 255, g: 0, b: 255)
+    end
+  end
+end
+
+system :debug do |entities|
+  outputs.primitives << gtk.framerate_diagnostics_primitives
+end
+
+world :menu, 
+      systems: [:hoverable_system, :solid_system, :label_system, :click_system, :debug], 
+      entities: [
+        { button: { position: { x: 540, y: 385 }, size: { w: 200, h: 50 }, label: { text: "Play" }, clickable: { target: :play }, as: :play_button } },
+        { button: { position: { x: 540, y: 285 }, size: { w: 200, h: 50 }, label: { text: "Exit" }, clickable: { target: :exit }, as: :exit_button } },
+      ]
+
+def rect(entity)
+  { x: entity.position.x, y: entity.position.y, w: entity.size.w, h: entity.size.h }
+end
+
 def tick args
-  args.state.logo_rect ||= { x: 576,
-                             y: 200,
-                             w: 128,
-                             h: 101 }
-
-  args.outputs.labels  << { x: 640,
-                            y: 600,
-                            text: 'Hello World!',
-                            size_px: 30,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
-
-  args.outputs.labels  << { x: 640,
-                            y: 510,
-                            text: "Documentation is located under the ./docs/docs.txt directory. 150+ samples are located under the ./samples directory.",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
-
-  args.outputs.labels  << { x: 640,
-                            y: 480,
-                            text: "If you prefer formatted docs, you can access them locally at http://localhost:9001 or online at http://docs.dragonruby.org.",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
-
-  args.outputs.labels  << { x: 640,
-                            y: 400,
-                            text: "The code that powers what you're seeing right now is located at ./mygame/app/main.rb.",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
-
-  args.outputs.labels  << { x: 640,
-                            y: 380,
-                            text: "(you can change the code while the app is running and see the updates live)",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
-
-  args.outputs.sprites << { x: args.state.logo_rect.x,
-                            y: args.state.logo_rect.y,
-                            w: args.state.logo_rect.w,
-                            h: args.state.logo_rect.h,
-                            path: 'dragonruby.png',
-                            angle: Kernel.tick_count }
-
-  args.outputs.labels  << { x: 640,
-                            y: 180,
-                            text: "(use arrow keys to move the logo around)",
-                            size_px: 20,
-                            anchor_x: 0.5,
-                            anchor_y: 0.5 }
-
-  args.outputs.labels  << { x: 640,
-                            y: 80,
-                            text: 'Join the Discord Server! https://discord.dragonruby.org',
-                            size_px: 30,
-                            anchor_x: 0.5 }
-
-  if args.inputs.keyboard.left
-    args.state.logo_rect.x -= 10
-  elsif args.inputs.keyboard.right
-    args.state.logo_rect.x += 10
+  if args.state.tick_count == 0 
+    set_world :menu
   end
-
-  if args.inputs.keyboard.down
-    args.state.logo_rect.y -= 10
-  elsif args.inputs.keyboard.up
-    args.state.logo_rect.y += 10
-  end
-
-  if args.state.logo_rect.x > 1280
-    args.state.logo_rect.x = 0
-  elsif args.state.logo_rect.x < 0
-    args.state.logo_rect.x = 1280
-  end
-
-  if args.state.logo_rect.y > 720
-    args.state.logo_rect.y = 0
-  elsif args.state.logo_rect.y < 0
-    args.state.logo_rect.y = 720
-  end
+  process_systems args 
 end

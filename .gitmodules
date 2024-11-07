@@ -1,0 +1,4 @@
+[submodule "lib/drecs"]
+	path = lib/drecs
+	url = git@github.com:joshleblanc/drecs.git
+	branch = master
