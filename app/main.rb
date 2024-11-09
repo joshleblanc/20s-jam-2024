@@ -6,7 +6,7 @@ WIDTH = 1024
 HEIGHT = 720
 OFFSET = 128
 
-SCALE = 2
+SCALE = 80
 ROWS = (HEIGHT / SCALE).to_i
 COLS = (WIDTH / SCALE).to_i
 
@@ -15,26 +15,193 @@ component :size, w: WIDTH / COLS, h: HEIGHT / ROWS
 component :label, text: "lorem ipsum"
 component :hovered
 component :bordered
+component :can_attack
+component :on_cooldown
 component :solid, { r: 0, g: 0, b: 0 }
 component :clickable, target: :none
 component :range, value: 1
-component :health, value: 100
+component :health, current: 100, full: 100
 component :cost, value: 25
 component :team, value: 1
 component :resource, value: 0
 component :sprite, path: ""
+component :damage, value: 0
+component :attack_speed, value: 1, cooldown: 60, current_cooldown: 0
 component :timer, value: 20
+component :unit, name: :light_unit
+component :speed, x: 0, y: 0
+component :accel, value: 1
+component :target, value: nil
+component :rotation, value: 0
+
 
 entity :button, :position, :size, :label, :bordered, :label, :clickable, solid: { r: 255, g: 255, b: 0 }
 entity :cell, :position, :bordered, :size, clickable: { target: :unit }, solid: { r: 255, g: 255, b: 255 }
-entity :light_unit, :range, :health, :cost, :team, :position, :size, :bordered, sprite: { path: "sprites/hexagon/indigo.png" }
+
+entity(
+  :light_unit, 
+  :on_cooldown, 
+  :cost, 
+  :team, 
+  :position, 
+  :size, 
+  :rotation,
+  :bordered, 
+  health: { current: 100, full: 100 },
+  range: { value: SCALE * 10 }, 
+  damage: { value: 10 }, 
+  attack_speed: { value: 1 }, 
+  sprite: { path: "sprites/hexagon/indigo.png" }
+)
+
+entity(
+  :medium_unit, 
+  :on_cooldown, 
+  :cost, 
+  :team, 
+  :position, 
+  :size, 
+  :rotation,
+  :bordered,
+  health: { full: 175, current: 175},
+  range: { value: SCALE * 5 }, 
+  damage: { value: 20 }, 
+  attack_speed: { value: 2 }, 
+  sprite: { path: "sprites/square/indigo.png" }
+)
+
+entity(
+  :heavy_unit, 
+  :on_cooldown, 
+  :health, 
+  :cost, 
+  :team, 
+  :position, 
+  :size, 
+  :rotation,
+  :bordered, 
+  health: { full: 250, current: 250 },
+  range: { value: SCALE * 1 }, 
+  damage: { value: 45 }, 
+  attack_speed: { value: 3 }, 
+  sprite: { path: "sprites/circle/indigo.png" }
+)
+
 entity :base, :health, :team, :position, :size, :bordered, sprite: { path: "sprites/triangle/equilateral/blue.png" }
 entity :gold, :resource, :team 
 entity :timer, :timer
 
+entity :projectile, :speed, :position, :size, :solid, :target, :accel, :damage
+
+entity :selected_unit, :cost, :team, :unit
+
+system :health_system, :health do |entities| 
+  entities.each do |e|
+    if e.health.current <= 0 
+      delete_entity(e)
+      create_entity(:cell, {
+        position: e.position.clone,
+        size: e.size.clone
+      })
+    end
+  end
+end
+
+system :render_selected_unit_system, :cost, :team, :unit do |entities|
+  entities.each do |entity|
+    x = if entity.team.value == 0
+      0
+    else
+      WIDTH + OFFSET
+    end
+
+    x += 32
+    y = 256
+
+    actual_unit = Drecs::ENTITIES[entity.unit.name]
+    outputs.sprites << { x: x, y: y, w: 64, h: 64, path: actual_unit.sprite.path }
+    outputs.labels << { x: x + 32, y: y, text: entity.unit.name, alignment_enum: 1, size_enum: 0 }
+    outputs.labels << { x: x + 32, y: y - 25, text: entity.cost.value, alignment_enum: 1, size_enum: 0 }
+
+  end
+end
+
+system :hotkeys_system do
+  if inputs.keyboard.one
+    ent = state.entities.find { _1.entity_name == :selected_unit && _1.team.value == 0 }
+    ent.unit.name = :light_unit
+    ent.cost.value = 25
+  elsif inputs.keyboard.two
+    ent = state.entities.find { _1.entity_name == :selected_unit && _1.team.value == 0 }
+    ent.unit.name = :medium_unit
+    ent.cost.value = 50
+  elsif inputs.keyboard.three
+    ent = state.entities.find { _1.entity_name == :selected_unit && _1.team.value == 0 }
+    ent.unit.name = :heavy_unit
+    ent.cost.value = 75
+  end
+end
+
+system :projectile_system, :speed, :position, :target, :accel do |entities|
+  entities.each do |e|
+    mid1 = geometry.rect_center_point(rect(e))
+    mid2 = geometry.rect_center_point(rect(e.target.value))
+    dir = geometry.vec2_normalize(vec2_sub(mid1, mid2))
+
+    e.speed = vec2_add(e.speed, vec2_mul(dir, e.accel.value))
+
+    e.position = vec2_add(e.position, e.speed)
+
+    if rect(e).inside_rect?(rect(e.target.value))
+      e.target.value.health.current -= e.damage.value
+      delete_entity(e)
+    end
+  end
+end
+
+system :can_attack_system, :attack_speed, :on_cooldown do |entities|
+  entities.each do |e|
+    e.attack_speed.current_cooldown -= 1
+    if e.attack_speed.current_cooldown <= 0
+      remove_component(e, :on_cooldown)
+      add_component(e, :can_attack)
+    end
+  end
+end
+
+system :attack_system, :team, :position, :range, :damage, :attack_speed, :can_attack do |entities|
+  entities.each do |e|
+    mid1 = geometry.rect_center_point rect(e)
+    
+    in_range = entities.find do 
+      mid2 = geometry.rect_center_point rect(_1)
+      dist = geometry.distance(mid1, mid2)
+
+      dist <= e.range.value && _1.team.value != e.team.value && e != _1
+    end
+
+    if in_range 
+      e.attack_speed.current_cooldown = e.attack_speed.cooldown
+      remove_component(e, :can_attack)
+      add_component(e, :on_cooldown)
+      e.rotation.value = geometry.angle_to(mid1, geometry.rect_center_point(rect(in_range)))
+      create_entity(:projectile, {
+        speed: { value: 1 },
+        target: { value: in_range },
+        size: { w: e.damage.value, h: e.damage.value },
+        position: mid1,
+        solid: team_color(e.team.value),
+        damage: { value: e.damage.value }
+      })
+    else 
+      e.rotation.value += 1
+    end
+  end
+end
+
 system :resource_gain_system, :resource do |entities|
   entities.each do |entity|
-    if state.tick_count % 10 == 0 
+    if state.tick_count % 5 == 0 
       entity.resource.value += 1
     end
   end
@@ -56,21 +223,33 @@ system :resource_display_system, :resource, :team do |entities|
   end
 end
 
-system :draw_units_system, :sprite, :team, :position, :size do |entities|
+system :draw_units_system, :sprite, :team, :position, :size, :health do |entities|
   entities.each do |e| 
-    if e.entity_name == :base 
-      log "drawing base, #{e.size}"
-    end
-    outputs.sprites << rect(e).merge(path: e.sprite.path)
+    outputs.solids << rect(e).merge(**team_color(e.team.value), h: (e.health.current / e.health.full) * e.size.h)
+    outputs.sprites << rect(e).merge(path: e.sprite.path, blendmode_enum: 2, angle: e.rotation&.value || 0)
   end
 end
 
 system :setup_game do
+  base_row = (ROWS / 2).to_i
   ROWS.times do |row|
     COLS.times do |col|
-      create_entity(:cell, {
-        position: { x: ((WIDTH / COLS) * col) + OFFSET, y: (HEIGHT / ROWS) * row },
-      })
+      if row == base_row && col == 0
+        create_entity(:base, {
+          team: { value: 0 },
+          position: { x: ((WIDTH / COLS) * col) + OFFSET, y: (HEIGHT / ROWS) * row },
+        })
+      elsif row == base_row && col == COLS - 1
+        create_entity(:base, {
+          team: { value: 1 },
+          position: { x: ((WIDTH / COLS) * col) + OFFSET, y: (HEIGHT / ROWS) * row },
+        })
+      else 
+        create_entity(:cell, {
+          position: { x: ((WIDTH / COLS) * col) + OFFSET, y: (HEIGHT / ROWS) * row },
+        })
+      end
+
     end
   end
 
@@ -79,7 +258,7 @@ end
 
 system :click_system, :clickable, :position, :size do |entities|
   entities.each do |e|
-    if inputs.mouse.click && inputs.mouse.click.point.inside_rect?(rect(e))
+    if inputs.mouse.click && inputs.mouse.inside_rect?(rect(e))
       if e.clickable.target == :exit
         exit
       elsif e.clickable.target == :play
@@ -87,13 +266,14 @@ system :click_system, :clickable, :position, :size do |entities|
       elsif e.clickable.target == :unit
         
         # TODO: track team and selected unit
-        team = 0
-        selected_unit = { cost: { value: 25 }}
+        team = inputs.mouse.button_left ? 0 : 1
+        selected_unit = state.entities.find { _1.entity_name == :selected_unit && _1.team.value == team }
 
         resource = state.entities.find { _1.team.value == team && _1.entity_name == :gold }
         if resource&.resource&.value >= selected_unit&.cost&.value
           resource.resource.value -= selected_unit.cost.value
-          create_entity(:light_unit, team: { value: 0 }, position: e.position, size: e.size)
+          log selected_unit
+          create_entity(selected_unit.unit.name, team: { value: team }, position: e.position, size: e.size)
           delete_entity(e)
         end
       end
@@ -126,7 +306,7 @@ system :label_system, :label, :position, :label, :size do |entities|
   end
 end
 
-system :solid_system, :solid do |entities|
+system :solid_system, :solid, :position, :size do |entities|
   entities.each do |e|
     if has_components? e, :hovered
       outputs.solids << rect(e).merge(r: e.solid.r % 64, g: e.solid.g % 64, b: e.solid.b % 64)
@@ -179,34 +359,39 @@ world :menu,
 world :game,
       systems: [ 
         :click_system, :draw_units_system, :hoverable_system, :setup_game, :debug, :solid_system, :border_system, :resource_gain_system, :resource_display_system,
-        :timer_system, :render_timer_system
+        :timer_system, :render_timer_system, :can_attack_system, :attack_system, :projectile_system, :health_system,
+        :render_selected_unit_system, :hotkeys_system
       ],
       entities: [
         { gold: { team: { value: 0 } }},
         { gold: { team: { value: 1 } }},
         { timer: { timer: { value: 20 }}},
-        { 
-          base: { 
-            team: { value: 0 },
-            position: {
-              x: OFFSET,
-              y: (HEIGHT / 2) - (HEIGHT / ROWS) / 2
-            }
-          }
-        },
-        { 
-          base: { 
-            team: { value: 1 },
-            position: {
-              x: (OFFSET + (WIDTH / COLS)).from_right,
-              y: (HEIGHT / 2) - (HEIGHT / ROWS) / 2
-            }
-          }
-        },
+        { selected_unit: { team: { value: 0 }, unit: { name: :light_unit }}},
+        { selected_unit: { team: { value: 1 }, unit: { name: :light_unit }}},
       ]
 
 def rect(entity)
   { x: entity.position.x, y: entity.position.y, w: entity.size.w, h: entity.size.h }
+end
+
+def team_color(team)
+  if team == 0
+    { r: 255, g: 0, b: 0 }
+  else 
+    { r: 0, g: 0, b: 255 }
+  end
+end
+
+def vec2_add(a, b)
+  { x: a.x + b.x, y: a.y + b.y }
+end
+
+def vec2_sub(a, b) 
+  { x: b.x - a.x, y: b.y - a.y }
+end
+
+def vec2_mul(a, b)
+  { x: a.x * b, y: a.y * b }
 end
 
 def tick args
